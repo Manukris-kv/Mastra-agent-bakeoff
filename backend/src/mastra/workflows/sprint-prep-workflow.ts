@@ -1,0 +1,107 @@
+import { createStep, createWorkflow } from '@mastra/core/workflows';
+import { z } from 'zod';
+import { callMcpTool } from '../mcp';
+
+// Exposed to the chat agent as a tool — see chat-agent.ts's
+// `workflows: { sprintPrep: sprintPrepWorkflow }`. This deterministically
+// gathers the "sprint prep bundle" (calendar -> sprint tickets -> PR status
+// -> Slack -> email) so the agent doesn't have to improvise a
+// data-gathering plan every time it's asked something like "prep me for 2pm
+// sprint planning" — grounding stays high, prioritization judgment is still
+// left to the agent.
+//
+// Schemas are intentionally loose (z.any()) rather than hand-mirroring the
+// MCP server's own JSON shapes — see standup-workflow.ts for the same choice.
+
+const inputSchema = z.object({ now: z.string() });
+
+// The dataset's current sprint (data/meta.json's current_sprint) — this is
+// fixed data for the shared mock dataset, not something derivable from a
+// tool call, so it's hardcoded here rather than guessed by the agent.
+const CURRENT_SPRINT = 'Sprint 14';
+
+const findSprintEventStep = createStep({
+  id: 'find-sprint-event',
+  inputSchema,
+  outputSchema: z.array(z.any()),
+  // 'this_week' resolves against the MCP server's own frozen reference date.
+  execute: async () => callMcpTool('get_calendar_events', { start_date: 'this_week', end_date: 'this_week', event_type: 'sprint_planning' }),
+});
+
+const sprintTicketsStep = createStep({
+  id: 'get-sprint-tickets',
+  inputSchema: findSprintEventStep.outputSchema,
+  outputSchema: z.array(z.any()),
+  execute: async () => callMcpTool('get_jira_tickets', { sprint: CURRENT_SPRINT }),
+});
+
+const linkPrsStep = createStep({
+  id: 'link-prs-for-ticket',
+  inputSchema: z.any(),
+  outputSchema: z.object({ ticketId: z.string(), prIds: z.array(z.string()) }),
+  execute: async ({ inputData }) => {
+    const ticket = inputData as { id: string };
+    const result = (await callMcpTool('link_jira_to_github', { ticket_id: ticket.id })) as {
+      ticket_id: string;
+      linked_prs: Array<{ id: string }>;
+    };
+    return { ticketId: result.ticket_id, prIds: result.linked_prs.map(pr => pr.id) };
+  },
+});
+
+const prDetailStep = createStep({
+  id: 'get-pr-detail',
+  inputSchema: z.string(),
+  outputSchema: z.record(z.string(), z.any()),
+  execute: async ({ inputData }) => callMcpTool('get_github_pr_detail', { pr_id: inputData }),
+});
+
+const slackStep = createStep({
+  id: 'get-slack',
+  inputSchema: z.array(z.any()),
+  outputSchema: z.array(z.any()),
+  execute: async () => callMcpTool('get_slack_messages', { channel: 'engineering' }),
+});
+
+const gmailStep = createStep({
+  id: 'get-gmail',
+  inputSchema: z.array(z.any()),
+  outputSchema: z.array(z.any()),
+  execute: async () => callMcpTool('get_gmail_threads', { subject_contains: 'sprint' }),
+});
+
+const bundleStep = createStep({
+  id: 'assemble-bundle',
+  inputSchema: z.array(z.any()),
+  outputSchema: z.object({
+    calendarEvents: z.array(z.any()),
+    sprintTickets: z.array(z.any()),
+    prDetails: z.array(z.any()),
+    slackMessages: z.array(z.any()),
+    gmailThreads: z.array(z.any()),
+  }),
+  execute: async ({ getStepResult }) => ({
+    calendarEvents: getStepResult(findSprintEventStep),
+    sprintTickets: getStepResult(sprintTicketsStep),
+    // getStepResult infers prDetailStep's own (single-item) outputSchema; at
+    // runtime, inside `.foreach()`, it actually resolves to an array.
+    prDetails: getStepResult(prDetailStep) as unknown as Record<string, unknown>[],
+    slackMessages: getStepResult(slackStep),
+    gmailThreads: getStepResult(gmailStep),
+  }),
+});
+
+export const sprintPrepWorkflow = createWorkflow({
+  id: 'sprint-prep-workflow',
+  inputSchema,
+  outputSchema: bundleStep.outputSchema,
+})
+  .then(findSprintEventStep)
+  .then(sprintTicketsStep)
+  .foreach(linkPrsStep)
+  .map(async ({ inputData }) => inputData.flatMap(t => t.prIds))
+  .foreach(prDetailStep)
+  .then(slackStep)
+  .then(gmailStep)
+  .then(bundleStep)
+  .commit();
