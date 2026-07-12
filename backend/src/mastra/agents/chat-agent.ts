@@ -6,12 +6,8 @@ import { sharedMemory } from '../memory';
 import { sprintPrepWorkflow } from '../workflows/sprint-prep-workflow';
 import { noFabricationScorer } from '../scorers/no-fabrication-scorer';
 
-// One agent, no mode branching: it infers from the message itself whether
-// this is a quick lookup or an open-ended planning ask, the same way a real
-// assistant would — nobody tells a real assistant "this is mode 2". The
-// harness's taskConfig.mode still arrives with every call, but only for
-// scoring which rubric row a transcript is judged against; it is never fed
-// into this agent's behavior.
+// One agent, no mode branching — it infers scope from the message itself.
+// taskConfig.mode still arrives with every call, but only for scoring.
 export const chatAgent = new Agent({
   id: 'chat-agent',
   name: 'Dev Daily Assistant',
@@ -56,14 +52,9 @@ update_jira_ticket, post_slack_message, and send_email only DRAFT the change and
       sampling: { type: 'ratio', rate: 1 },
     },
   },
-  // Extended thinking (Claude's real chain-of-thought) was tried here and
-  // dropped: with tools attached (this agent always has some), Anthropic
-  // requires the thinking block's signature to be echoed back on the next
-  // turn, and this Mastra+OpenRouter version doesn't preserve it — every
-  // multi-tool-call turn hit a hard 400 ("Invalid `signature` in `thinking`
-  // block"). Not worth the risk for a demo; see trace-utils.ts for how the
-  // "reasoning" UI block is populated instead (narration before the first
-  // tool call, not real thinking tokens).
+  // Extended thinking was tried and dropped: with tools attached, this
+  // Mastra+OpenRouter version doesn't preserve the thinking signature across
+  // turns, causing a hard 400 on any multi-tool-call turn.
   defaultOptions: {
     modelSettings: { temperature: AGENT_TEMPERATURE },
   },

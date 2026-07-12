@@ -3,15 +3,10 @@ import { z } from 'zod';
 import { reviewDraft, reviewerVerdictSchema } from '../agents/reviewer-agent';
 import { buildAgentTrace, forwardTextAndDetectApproval } from '../../trace-utils';
 
-// Workflow 2: every non-standup-only chat turn runs through this, so tracing
-// and approval handling come from Mastra's primitives instead of being
-// hand-rolled. Standup's own approval (Workflow 1, via start_standup /
-// resume_standup) never reaches this workflow — those are ordinary tool
-// calls from the agent step's point of view, so a standup turn always
-// completes as a normal 'ok' result (the agent just relays the draft and
-// asks a plain yes/no in conversation). This workflow only suspends for a
-// *spontaneous* write (updateJiraTicket / postSlackMessage / sendEmail),
-// which has `requireApproval: true` and genuinely pauses the agent's turn.
+// Every chat turn runs through this. Standup's own approval (start_standup/
+// resume_standup) never suspends this workflow — those are ordinary tool
+// calls from the agent step's point of view. This workflow only suspends for
+// a spontaneous write (confirm_action, gated by requireToolApproval).
 
 const messageSchema = z.object({
   role: z.enum(['user', 'assistant', 'system']),
@@ -56,20 +51,15 @@ const agentStep = createStep({
     const agent = mastra!.getAgent('chatAgent');
     const memoryScope = { resource: inputData.userId, thread: inputData.threadId };
 
-    // The model has no ground truth for "today" or "who am I" otherwise —
-    // without this it guesses (observed: a fabricated `now` argument to
-    // start_standup, cascading into empty tool data and then invented
-    // standup content). A leading system message gives it both directly
-    // instead of leaving temporal/identity grounding to chance.
+    // Without this the model guesses `now`/identity (observed: a fabricated
+    // date fed into start_standup, cascading into invented content).
     const groundedMessages = [
       { role: 'system' as const, content: `Current date/time: ${inputData.now}. Current user id: ${inputData.userId}.` },
       ...inputData.messages,
     ];
 
-    // inputData.messages is validated by messageSchema (role as a union of
-    // literals on one object type), which the SDK's discriminated message
-    // union can't structurally match even though every element is valid —
-    // same cast used at this boundary throughout the codebase.
+    // Cast: messageSchema's shape doesn't structurally match the SDK's
+    // discriminated message union, even though every element is valid.
     const current = await agent.stream(
       groundedMessages as Parameters<typeof agent.stream>[0],
       { memory: memoryScope },
@@ -147,10 +137,8 @@ const approvalGateStep = createStep({
       : await agent.declineToolCall({ runId: inputData.runId!, toolCallId: inputData.toolCallId });
 
     let { text, approval } = await forwardTextAndDetectApproval(current, writer);
-    // A second write needing its own approval within the same turn would
-    // require a second full suspend/resume round-trip, which a single step
-    // invocation can't do (step-local state doesn't survive a suspend).
-    // Auto-decline it rather than silently executing an unapproved write.
+    // A second write in the same turn can't get its own suspend/resume round
+    // trip here — auto-decline rather than silently executing it unapproved.
     if (approval) {
       current = await agent.declineToolCall({ runId: current.runId, toolCallId: approval.toolCallId });
       const continued = await forwardTextAndDetectApproval(current, writer);

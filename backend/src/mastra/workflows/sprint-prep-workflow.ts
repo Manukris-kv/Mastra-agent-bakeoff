@@ -2,22 +2,14 @@ import { createStep, createWorkflow } from '@mastra/core/workflows';
 import { z } from 'zod';
 import { callMcpTool } from '../mcp';
 
-// Exposed to the chat agent as a tool — see chat-agent.ts's
-// `workflows: { sprintPrep: sprintPrepWorkflow }`. This deterministically
-// gathers the "sprint prep bundle" (calendar -> sprint tickets -> PR status
-// -> Slack -> email) so the agent doesn't have to improvise a
-// data-gathering plan every time it's asked something like "prep me for 2pm
-// sprint planning" — grounding stays high, prioritization judgment is still
-// left to the agent.
-//
-// Schemas are intentionally loose (z.any()) rather than hand-mirroring the
-// MCP server's own JSON shapes — see standup-workflow.ts for the same choice.
+// Exposed to the chat agent as a tool (see chat-agent.ts's `workflows:`).
+// Deterministically gathers the sprint-prep bundle (calendar -> sprint
+// tickets -> PR status -> Slack -> email) so the agent doesn't improvise a
+// data-gathering plan; prioritization judgment is still left to the agent.
 
 const inputSchema = z.object({ now: z.string() });
 
-// The dataset's current sprint (data/meta.json's current_sprint) — this is
-// fixed data for the shared mock dataset, not something derivable from a
-// tool call, so it's hardcoded here rather than guessed by the agent.
+// data/meta.json's current_sprint — fixed for this dataset, not derivable from a tool call.
 const CURRENT_SPRINT = 'Sprint 14';
 
 const findSprintEventStep = createStep({

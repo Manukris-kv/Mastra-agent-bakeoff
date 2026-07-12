@@ -1,20 +1,11 @@
-// Interactive chat API for the frontend's single chat screen — a thin HTTP
-// wrapper around src/chat.ts's runChatTurn. Stateless: a suspended run is
-// resumed purely by its runId (Mastra's storage persists the snapshot), so
-// there's no in-memory pending-approval map to maintain here.
-//
-// Streams real-time: each runChatTurn event (text/reasoning/tool-call/
-// tool-result/approval_required/finish) is written to the HTTP response as
-// one NDJSON line as soon as it's produced, via Hono's `stream()` helper —
-// the frontend reads the response body incrementally rather than waiting
-// for one buffered JSON blob.
+// Thin HTTP wrapper around src/chat.ts's runChatTurn. Stateless: a suspended
+// run resumes purely by its runId (Mastra's storage persists the snapshot).
+// Streams each event as one NDJSON line via Hono's `stream()` helper.
 import { registerApiRoute } from '@mastra/core/server';
 import { stream as honoStream } from 'hono/streaming';
 import { runChatTurn, type RunChatTurnInput } from './chat';
 
-// `c: any` here is a pragmatic pass-through: Hono's Context type carries a
-// route-path-specific generic that's awkward to name outside the handler
-// that receives it, and honoStream()'s own signature still checks the value.
+// `c: any`: Hono's Context generic is awkward to name outside its own handler.
 async function streamChatTurn(c: any, input: RunChatTurnInput) {
   c.header('Content-Type', 'application/x-ndjson');
   return honoStream(c, async s => {
@@ -34,8 +25,6 @@ export const chatMessageRoute = registerApiRoute('/chat/message', {
 
     return streamChatTurn(c, {
       conversation: [{ role: 'user', content: message }],
-      // mode is scoring-only metadata per the shared harness contract — it
-      // has no effect on chat behavior, so the demo UI doesn't collect it.
       taskConfig: { mode: 3, userId, now: new Date().toISOString(), threadId },
     });
   },

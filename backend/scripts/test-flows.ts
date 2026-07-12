@@ -1,16 +1,9 @@
-// Interactive smoke test for the single chat surface through src/chat.ts's
-// runChatTurn — the same streaming entrypoint the HTTP routes (and,
-// ultimately, the bake-off harness) use. Prints events live as they arrive
-// (text/tool-call/tool-result), and prompts for approve/deny whenever a
-// turn suspends on a spontaneous write.
+// Interactive smoke test for src/chat.ts's runChatTurn.
 //
 // One-shot:    node --env-file=.env node_modules/.bin/tsx scripts/test-flows.ts "your message here"
 // Interactive: node --env-file=.env node_modules/.bin/tsx scripts/test-flows.ts
-//              (then type messages at the `>` prompt; "exit" to quit)
 //
-// Optional: TEST_USER_ID=whatever for a different conversation identity —
-// this only scopes our own memory (thread/resource), it doesn't select a
-// different mock-data user; the data server is single-user (Aisha Khan).
+// TEST_USER_ID=whatever scopes our own memory only — the mock-data user is fixed.
 
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
@@ -40,11 +33,8 @@ const c = {
 
 const MAX_JSON_LEN = 1200;
 
-// MCP tool results sometimes wrap their real payload as
-// {content: [{type: 'text', text: '...json...'}], isError} rather than
-// returning it directly — unwrap that one level for display only (same
-// shape ../src/mastra/mcp.ts already unwraps for direct workflow calls),
-// so logs show the actual data instead of an escaped-JSON-in-a-string blob.
+// Some MCP tool results wrap the payload as {content: [{type: 'text', text: '...json...'}]}
+// rather than returning it directly — unwrap for display (see ../src/mastra/mcp.ts).
 function unwrapForDisplay(value: unknown): unknown {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     const obj = value as Record<string, unknown>;

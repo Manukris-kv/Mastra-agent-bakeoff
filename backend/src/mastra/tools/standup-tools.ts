@@ -1,11 +1,8 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 
-// Exposes Workflow 1 (the fixed 10-step standup-prep procedure) to the chat
-// agent as a start/resume tool pair, rather than the agent (or anything else)
-// calling the workflow directly. This keeps Workflow 1's own suspend/resume
-// entirely self-contained: the chat agent just sees two tool calls, and never
-// has to know a nested workflow suspended underneath it.
+// Exposes the standup workflow to the chat agent as a start/resume tool pair —
+// the agent just sees two tool calls, never a nested workflow suspension.
 
 const outputSchema = z.object({
   status: z.enum(['pending_approval', 'posted', 'declined']),
@@ -26,9 +23,7 @@ export const startStandupTool = createTool({
     const result = await run.start({ inputData: { userId: inputData.userId, now: inputData.now } });
 
     if (result.status === 'suspended') {
-      // suspendPayload is keyed by the suspended step's id (e.g.
-      // { 'approve-standup': { summary } }), not the payload directly —
-      // same convention used throughout (see chat.ts's suspend handling).
+      // suspendPayload is keyed by the suspended step's id, not the payload directly.
       const suspendPayloadByStep = result.suspendPayload as Record<string, { summary: string }>;
       const suspendPayload = Object.values(suspendPayloadByStep)[0];
       return { status: 'pending_approval' as const, runId: run.runId, summary: suspendPayload.summary };

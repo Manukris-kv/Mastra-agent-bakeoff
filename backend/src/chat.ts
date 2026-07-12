@@ -1,18 +1,11 @@
-// The single streaming entrypoint (§13-shaped) — the one thing every caller
-// (harness now, a real UI later) talks to. Internally: chatTurnWorkflow's
-// run.stream()/run.resumeStream(), forwarding every chunk to the caller as it
-// arrives. Since this only calls the chat agent and Workflow 2, it doesn't
-// need to change when the underlying tool/data source changes (it already
-// didn't, when local stub tools were swapped for the real MCP server — see
-// ../src/mastra/mcp.ts).
+// Single streaming entrypoint every caller (test script, HTTP routes) uses —
+// wraps chatTurnWorkflow's run.stream()/resumeStream(), forwarding chunks live.
 
 import { toModelMessage, type ConversationMessage, type ChatChunk } from './trace-utils';
 import type { ReviewerVerdict } from './mastra/agents/reviewer-agent';
 
 export type TaskConfig = {
-  // Kept for scoring only (which rubric row a finished transcript is judged
-  // against) — never fed into the chat agent's behavior. There's no more
-  // mode branching: the agent infers scope from the message itself.
+  // Scoring metadata only — never fed into the agent's behavior.
   mode: 1 | 2 | 3;
   userId: string;
   now: string;
@@ -22,10 +15,8 @@ export type TaskConfig = {
 export type RunChatTurnInput = {
   conversation: ConversationMessage[];
   taskConfig: TaskConfig;
-  // Present when resuming a turn that suspended waiting on a spontaneous
-  // write's approval (see chat-turn-workflow.ts's approval-gate step).
-  // Standup's own approval never needs this — that's handled entirely
-  // through ordinary conversation (start_standup / resume_standup tool calls).
+  // Present when resuming a turn suspended on a spontaneous write's approval
+  // (see chat-turn-workflow.ts). Standup's own approval never needs this.
   runId?: string;
   resumeData?: { approved: boolean };
 };
@@ -36,10 +27,7 @@ export type ChatEvent =
   | { type: 'finish'; reply: string; trace: unknown[]; reviewer: ReviewerVerdict | undefined; usage: unknown };
 
 export async function* runChatTurn(input: RunChatTurnInput): AsyncGenerator<ChatEvent, void, unknown> {
-  // Dynamic import rather than a top-level one: chat-routes.ts (imported by
-  // src/mastra/index.ts to register its API routes) imports this file, so a
-  // static top-level `import { mastra } from './mastra'` here would close a
-  // circular dependency (index.ts -> chat-routes.ts -> chat.ts -> index.ts).
+  // Dynamic import to avoid a circular dependency: index.ts -> chat-routes.ts -> chat.ts -> index.ts.
   const { mastra } = await import('./mastra');
   const workflow = mastra.getWorkflow('chatTurnWorkflow');
   const threadId = input.taskConfig.threadId ?? input.taskConfig.userId;
@@ -70,9 +58,7 @@ export async function* runChatTurn(input: RunChatTurnInput): AsyncGenerator<Chat
   const result = await stream.result;
 
   if (result.status === 'suspended') {
-    // suspendPayload is keyed by the suspended step's id (only one step in
-    // this workflow ever suspends, so just take the one value) — same
-    // nesting-by-step-id convention as the standup workflow's own suspend.
+    // suspendPayload is keyed by the suspended step's id; only one step ever suspends.
     const suspendPayloadByStep = result.suspendPayload as Record<string, { toolName: string; args: unknown }>;
     const suspendPayload = Object.values(suspendPayloadByStep)[0];
     yield {
@@ -112,9 +98,7 @@ export type RunChatTurnBatchResult = {
   pendingApproval?: { runId: string; description: string; payload: unknown };
 };
 
-// For non-streaming callers (e.g. a batch scorer): collect the same run's
-// events into { reply, trace } — one code path serves both streaming and
-// batch use rather than maintaining two.
+// For non-streaming callers: collect the same run's events into { reply, trace }.
 export async function runChatTurnBatch(input: RunChatTurnInput): Promise<RunChatTurnBatchResult> {
   let text = '';
   for await (const event of runChatTurn(input)) {

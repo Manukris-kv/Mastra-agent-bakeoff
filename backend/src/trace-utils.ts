@@ -1,7 +1,5 @@
-// Pure helpers shared across the chat pipeline (src/chat.ts, chat-turn-workflow
-// step files) — kept dependency-free of the `mastra` singleton itself so
-// nothing importing these creates a circular import through
-// src/mastra/index.ts.
+// Pure helpers shared across the chat pipeline — kept free of the `mastra`
+// singleton import to avoid a circular dependency through src/mastra/index.ts.
 
 export type ConversationMessage = { role: string; content: string };
 
@@ -18,10 +16,7 @@ export type PendingToolApproval = {
   args: Record<string, unknown>;
 };
 
-// Live, incremental pieces of a turn forwarded to the UI as they happen —
-// distinct from the final assembled { reply, trace } so the frontend can
-// render reasoning and tool calls as their own blocks instead of folding
-// everything into one text bubble.
+// Live, incremental pieces of a turn forwarded to the UI as they happen.
 export type ChatChunk =
   | { type: 'text'; text: string }
   | { type: 'reasoning'; text: string }
@@ -49,21 +44,14 @@ export function buildAgentTrace(toolCalls: unknown, toolResults: unknown): Trace
   });
 }
 
-// Iterates an agent.stream()/approveToolCall()/declineToolCall() result's
-// fullStream, forwarding text, reasoning (Claude extended-thinking, when
-// enabled — see chat-agent.ts), and tool-call/tool-result chunks into the
-// workflow step's `writer` (live nested streaming) as distinct chunk types,
-// so the UI can render them as separate blocks instead of one text bubble.
-// Also watches for a `tool-call-approval` chunk — emitted when the model
-// tries to call a tool with `requireApproval: true` (the write tools).
-// Returns the concatenated text and, if one was seen, the approval chunk's
-// payload so the caller can suspend for a human decision.
+// Iterates an agent stream's fullStream, forwarding chunks into the workflow
+// step's `writer` (live nested streaming), and watches for a
+// `tool-call-approval` chunk (a `requireToolApproval`-gated tool call) so the
+// caller can suspend for a human decision.
 //
-// Accumulates text itself from the text-delta chunks rather than trusting
-// the stream's own `.text` promise: across a multi-tool-call turn (e.g. a
-// data tool followed by Mastra's built-in working-memory tool) `.text`
-// reliably came back empty here even though the text-delta chunks
-// themselves were correct — this sidesteps whatever that aggregation quirk is.
+// Accumulates text from text-delta chunks itself rather than trusting the
+// stream's own `.text` promise — across a multi-tool-call turn, `.text` came
+// back empty here even though the deltas themselves were correct.
 export async function forwardTextAndDetectApproval(
   stream: { fullStream: AsyncIterable<{ type: string; payload?: unknown }> },
   writer: { write: (chunk: unknown) => Promise<void> },

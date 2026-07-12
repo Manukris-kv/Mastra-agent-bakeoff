@@ -2,27 +2,17 @@ import { createStep, createWorkflow } from '@mastra/core/workflows';
 import { z } from 'zod';
 import { callMcpTool } from '../mcp';
 
-// Mode 1: standup prep, as a fixed 11-step procedure. The workflow engine
-// (not model reasoning) owns control flow here, so the exact source order
-// below is guaranteed on every run: profile -> calendar -> jira tickets ->
-// (loop) link PRs -> (loop) PR detail -> slack -> gmail -> synthesize ->
-// suspend for approval -> post -> confirm.
-//
-// Every data-gathering step calls the shared mock data MCP server
-// (../mcp.ts) directly via callMcpTool() rather than going through the chat
-// agent's own tool-calling loop — this is a deterministic pipeline, not an
-// agent decision. Schemas here are intentionally loose (z.any()/z.array(z.any()))
-// rather than hand-mirroring the MCP server's own JSON shapes field-for-field:
-// that dataset is the authority now, not something this app needs to also
-// model in Zod.
+// Standup prep as a fixed 11-step procedure — the workflow engine owns
+// control flow, not model reasoning. Every data-gathering step calls the MCP
+// server directly via callMcpTool(), bypassing the agent's tool-calling loop.
+// Schemas are loose (z.any()) rather than mirroring the MCP server's shapes.
 
 const workflowInputSchema = z.object({
   userId: z.string(),
   now: z.string(),
 });
 
-// Threaded through the later steps purely so the caller can report
-// cost/tokens for Mode 1 (the only step that calls an LLM).
+// Threaded through so the caller can report cost/tokens for the one LLM step.
 const usageSchema = z
   .object({
     inputTokens: z.number().optional(),
@@ -44,8 +34,7 @@ const calendarStep = createStep({
   description: "2. Fetch today's calendar events",
   inputSchema: profileStep.outputSchema,
   outputSchema: z.array(z.any()),
-  // 'today'/'yesterday' etc. resolve against the MCP server's own frozen
-  // reference date, not our app's wall-clock `now` — see ../mcp.ts.
+  // Resolves against the MCP server's own frozen reference date, not our wall-clock `now`.
   execute: async () => callMcpTool('get_calendar_events', { start_date: 'today', end_date: 'today' }),
 });
 
@@ -173,12 +162,8 @@ const postStep = createStep({
     if (!inputData.approved) {
       return { status: 'declined' as const, summary: inputData.summary, usage: inputData.usage };
     }
-    // The MCP server's own write tools are draft-then-confirm (see ../mcp.ts).
-    // Calling both directly here (bypassing requireToolApproval, which only
-    // applies to the agent's own tool-calling loop) is intentional: this
-    // step only runs after the human has *already* approved via the
-    // approve-standup suspend/resume above, so a second confirmation round
-    // trip through the MCP gate would just be redundant.
+    // Calls draft+confirm directly, bypassing requireToolApproval — the
+    // human already approved via the approve-standup suspend/resume above.
     const draft = (await callMcpTool('post_slack_message', {
       channel: 'standup',
       message: inputData.summary,
@@ -225,10 +210,7 @@ export const standupWorkflow = createWorkflow({
   .then(profileStep)
   .then(calendarStep)
   .then(ticketsStep)
-  // Loop choice: sequential `.foreach()` (default concurrency 1), not
-  // `.parallel()`. The PR lookups per ticket are independent, but a mapped
-  // sequential loop keeps step-by-step ordering deterministic and easy to
-  // reason about for scoring ("determinism & control").
+  // Sequential .foreach(), not .parallel() — keeps ordering deterministic.
   .foreach(linkPrsStep)
   .map(async ({ inputData }) => inputData.flatMap(t => t.prIds))
   .foreach(prDetailStep)
