@@ -13,3 +13,5 @@ const litellm = createOpenAICompatible({
 // Bare model names (no "provider/" prefix) — we call the provider directly,
 // so there's no gateway string to parse.
 export const MID_MODEL = litellm('claude-sonnet-4-5');
+
+export const AGENT_TEMPERATURE = 0.3;
