@@ -4,6 +4,7 @@ import { PostgresStoreVNext } from '@mastra/pg';
 import { Observability, MastraStorageExporter, MastraPlatformExporter, SensitiveDataFilter } from '@mastra/observability';
 
 import { standupWorkflow } from './workflows/standup-workflow';
+import { sprintPrepWorkflow } from './workflows/sprint-prep-workflow';
 import { chatTurnWorkflow } from './workflows/chat-turn-workflow';
 import { standupSynthesisAgent } from './agents/standup-synthesis-agent';
 import { chatAgent } from './agents/chat-agent';
@@ -12,7 +13,7 @@ import { noFabricationScorer } from './scorers/no-fabrication-scorer';
 import { chatMessageRoute, chatApproveRoute } from '../chat-routes';
 
 export const mastra = new Mastra({
-  workflows: { standupWorkflow, chatTurnWorkflow },
+  workflows: { standupWorkflow, sprintPrepWorkflow, chatTurnWorkflow },
   agents: { standupSynthesisAgent, chatAgent, reviewerAgent },
   scorers: { noFabricationScorer },
   server: {
@@ -25,10 +26,7 @@ export const mastra = new Mastra({
     },
     apiRoutes: [chatMessageRoute, chatApproveRoute],
   },
-  // Postgres, not the file-backed LibSQLStore from checkpoint-4 — durable
-  // storage for workflow snapshots and the observability traces below,
-  // swappable in one line the same way the memory store was in checkpoint-2.
-  storage: new PostgresStoreVNext({
+ storage: new PostgresStoreVNext({
     id: 'mastra-storage',
     connectionString: process.env.DATABASE_URL!,
     observability: {
