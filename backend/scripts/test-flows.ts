@@ -1,14 +1,22 @@
 // Interactive smoke test for src/chat.ts's runChatTurn.
 //
-// One-shot:    node --env-file=.env node_modules/.bin/tsx scripts/test-flows.ts "your message here"
-// Interactive: node --env-file=.env node_modules/.bin/tsx scripts/test-flows.ts
+// One-shot:    npx tsx scripts/test-flows.ts "your message here"
+// Interactive: npx tsx scripts/test-flows.ts
 //
-// TEST_USER_ID=whatever scopes our own memory only — the mock-data user is fixed.
+// TEST_USER_ID=whatever scopes our own memory only — the real MCP-backed user is fixed.
 
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import { runChatTurn, type RunChatTurnInput } from '../src/chat';
+
+// Load backend/.env so this runs standalone — fine if it's already loaded
+// another way (e.g. exported in the shell), just skip a missing file.
+try {
+  process.loadEnvFile();
+} catch (err) {
+  if (!(err && typeof err === 'object' && 'code' in err && err.code === 'ENOENT')) throw err;
+}
 
 const userId = process.env.TEST_USER_ID || 'demo-user';
 const threadId = randomUUID();

@@ -22,17 +22,40 @@ export const reviewerAgent = new Agent({
   id: 'reviewer-agent',
   name: 'Reviewer Agent',
   description: 'Checks a drafted reply against its tool-call trace before it is returned to the user',
-  instructions: `You are a strict reviewer. You will be given: the current date/time context, a drafted reply, and the full tool-call trace (tool name, args, result) that produced it.
+  instructions: `You are a reviewer. You will be given: the current date/time context, a drafted reply, and the full tool-call trace (tool name, args, result) that produced it.
 
-Check all four, in order:
-1. Every factual claim in the draft traces to a real tool result in the trace. Flag any claim that isn't grounded in a tool call.
-2. No cross-source link (e.g. "this PR closes that ticket", "this email is about that ticket") is claimed unless a tool result actually returned that link.
-3. Temporal references ("today", "yesterday", "this sprint") are computed from the given date/time context, not assumed or guessed.
-4. Any write action described in the draft (ticket update, Slack post, email send) is described as pending approval / not yet done — never as already completed, unless the trace shows an approved write actually executed.
+Your only job is to check whether the drafted reply is factually correct given the trace and the current date/time — not how it's phrased, organized, or labeled. Ranking, grouping, and opinion on top of real data are fine on their own and should never be flagged.
 
-Set approved=false and write a concrete correctionRequest if any check fails. Set approved=true with an empty issues list only if all four checks pass.`,
+Flag it (approved=false) only if:
+- The draft states something as fact that contradicts the trace, or that has no basis in it at all (a made-up number, name, status, or event).
+- A temporal reference ("today", "yesterday", "this sprint") is actually wrong given the current date/time and the trace's timestamps.
+- A cross-source link (e.g. "this PR closes that ticket") is claimed but no tool result actually shows that link.
+- A write action (ticket update, Slack post, email) is described as already done when the trace doesn't show an approved write actually executed.
+
+If the reply is factually correct against the trace, set approved=true with an empty issues list, even if it also summarizes, ranks, or comments on the data. Only write a correctionRequest when something is actually wrong.`,
   model: JUDGE_MODEL,
 });
+
+// Tool results (e.g. a GitHub PR search) can be huge — embedding them raw
+// has blown past the judge model's context window. Cap each one so the
+// trace stays bounded regardless of how much data a single tool returned.
+const MAX_RESULT_CHARS = 4000;
+
+function truncateTraceForReview(trace: unknown): unknown {
+  if (!Array.isArray(trace)) return trace;
+  return trace.map(entry => {
+    if (!entry || typeof entry !== 'object' || !('result' in entry)) return entry;
+    const { result, ...rest } = entry as Record<string, unknown>;
+    let text: string;
+    try {
+      text = JSON.stringify(result) ?? String(result);
+    } catch {
+      return entry;
+    }
+    if (text.length <= MAX_RESULT_CHARS) return entry;
+    return { ...rest, result: `${text.slice(0, MAX_RESULT_CHARS)}… (truncated, ${text.length} chars total)` };
+  });
+}
 
 export async function reviewDraft(params: {
   draft: string;
@@ -47,7 +70,7 @@ ${params.draft}
 """
 
 Tool-call trace:
-${JSON.stringify(params.trace, null, 2)}`;
+${JSON.stringify(truncateTraceForReview(params.trace), null, 2)}`;
 
   try {
     const result = await reviewerAgent.generate(prompt, {
