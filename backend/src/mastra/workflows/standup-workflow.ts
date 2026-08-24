@@ -169,6 +169,8 @@ const postStep = createStep({
     if (!inputData.approved) {
       return { status: 'declined' as const, summary: inputData.summary, usage: inputData.usage };
     }
+    // Calls draft+confirm directly, bypassing requireToolApproval — the
+    // human already approved via the approve-standup suspend/resume above.
     const draft = (await callMcpTool('post_slack_message', {
       channel: 'standup',
       message: inputData.summary,
