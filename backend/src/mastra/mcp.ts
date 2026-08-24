@@ -4,12 +4,19 @@ import { MCPClient } from '@mastra/mcp';
 // real Jira/GitHub/Slack/Gmail/Calendar APIs for whichever developer's
 // credentials are configured server-side (JIRA_EMAIL/GITHUB_TOKEN/
 // SLACK_BOT_TOKEN/Google OAuth), not a fixed persona or mock dataset.
+//
+// Writes (update_jira_ticket/post_slack_message/send_email) only draft and
+// return a pending_action_id; confirm_action(pending_action_id) is the only
+// way a write executes. Gating that one tool with requireToolApproval turns
+// the server's own draft/confirm protocol into our human-approval pause.
 export const pulseMcp = new MCPClient({
   id: 'pulse-assistant-mcp',
   servers: {
     pulse: {
       url: new URL(process.env.PULSE_MCP_URL ?? 'http://localhost:8081/sse'),
-      // Server's own instructions cover relative-date resolution.
+      // Receives the server's own un-namespaced tool name, not "pulse_confirm_action".
+      requireToolApproval: ({ toolName }: { toolName: string }) => toolName === 'confirm_action',
+      // Server's own instructions cover the draft/confirm protocol and relative-date resolution.
       forwardInstructions: true,
     },
   },

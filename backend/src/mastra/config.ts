@@ -14,4 +14,6 @@ const litellm = createOpenAICompatible({
 // so there's no gateway string to parse.
 export const MID_MODEL = litellm('claude-sonnet-4-5');
 
+export const JUDGE_MODEL = litellm('gpt-5.4-mini');
+
 export const AGENT_TEMPERATURE = 0.3;
