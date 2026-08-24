@@ -3,6 +3,7 @@ import { MID_MODEL } from '../config';
 import { pulseTools } from '../mcp';
 import { startStandupTool, resumeStandupTool } from '../tools/standup-tools';
 import { sharedMemory } from '../memory';
+import { noFabricationScorer } from '../scorers/no-fabrication-scorer';
 
 export const chatAgent = new Agent({
   id: 'chat-agent',
@@ -34,4 +35,10 @@ update_jira_ticket, post_slack_message, and send_email only DRAFT the change and
   model: MID_MODEL,
   tools: { ...pulseTools, startStandupTool, resumeStandupTool },
   memory: sharedMemory,
+  scorers: {
+    noFabrication: {
+      scorer: noFabricationScorer,
+      sampling: { type: 'ratio', rate: 1 },
+    },
+  },
 });

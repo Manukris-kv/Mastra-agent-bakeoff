@@ -1,17 +1,20 @@
 import { Mastra } from '@mastra/core/mastra';
 import { PinoLogger } from '@mastra/loggers';
-import { LibSQLStore } from '@mastra/libsql';
+import { PostgresStoreVNext } from '@mastra/pg';
+import { Observability, MastraStorageExporter, MastraPlatformExporter, SensitiveDataFilter } from '@mastra/observability';
 
 import { standupWorkflow } from './workflows/standup-workflow';
 import { chatTurnWorkflow } from './workflows/chat-turn-workflow';
 import { standupSynthesisAgent } from './agents/standup-synthesis-agent';
 import { chatAgent } from './agents/chat-agent';
 import { reviewerAgent } from './agents/reviewer-agent';
+import { noFabricationScorer } from './scorers/no-fabrication-scorer';
 import { chatMessageRoute, chatApproveRoute } from '../chat-routes';
 
 export const mastra = new Mastra({
   workflows: { standupWorkflow, chatTurnWorkflow },
   agents: { standupSynthesisAgent, chatAgent, reviewerAgent },
+  scorers: { noFabricationScorer },
   server: {
     // Dev-only: the frontend (Vite on a different port) calls this server
     // directly. Tighten `origin` before this goes anywhere near production.
@@ -22,14 +25,32 @@ export const mastra = new Mastra({
     },
     apiRoutes: [chatMessageRoute, chatApproveRoute],
   },
-  storage: new LibSQLStore({
+  // Postgres, not the file-backed LibSQLStore from checkpoint-4 — durable
+  // storage for workflow snapshots and the observability traces below,
+  // swappable in one line the same way the memory store was in checkpoint-2.
+  storage: new PostgresStoreVNext({
     id: 'mastra-storage',
-    // File-backed, not ':memory:' — a suspended workflow run has to survive
-    // this process exiting entirely; resuming it is a separate invocation.
-    url: 'file:mastra.db',
+    connectionString: process.env.DATABASE_URL!,
+    observability: {
+      connectionString: process.env.DATABASE_URL!,
+    },
   }),
   logger: new PinoLogger({
     name: 'Mastra',
     level: 'info',
+  }),
+  observability: new Observability({
+    configs: {
+      default: {
+        serviceName: 'mastra',
+        exporters: [
+          new MastraStorageExporter(), // Persists observability events to Mastra Storage
+          new MastraPlatformExporter(), // Sends observability events to Mastra Platform (if MASTRA_PLATFORM_ACCESS_TOKEN is set)
+        ],
+        spanOutputProcessors: [
+          new SensitiveDataFilter(), // Redacts sensitive data like passwords, tokens, keys
+        ],
+      },
+    },
   }),
 });
