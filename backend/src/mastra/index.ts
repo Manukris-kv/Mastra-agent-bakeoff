@@ -11,7 +11,10 @@ export const mastra = new Mastra({
   agents: { standupSynthesisAgent, chatAgent },
   storage: new LibSQLStore({
     id: 'mastra-storage',
-    url: ':memory:',
+    // File-backed, not ':memory:' — a suspended workflow run (see
+    // standup-workflow.ts's approve-standup step) has to survive this
+    // process exiting entirely; resuming it is a separate invocation.
+    url: 'file:mastra.db',
   }),
   logger: new PinoLogger({
     name: 'Mastra',

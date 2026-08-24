@@ -134,10 +134,83 @@ Format: a short "Yesterday / Today / Blockers" standup summary, plain text, read
   },
 });
 
+// Checkpoint 4: the pipeline now stops and waits for a real human decision
+// before doing anything irreversible, and picks back up exactly where it
+// left off — even in a brand-new process, since Mastra persists the
+// suspended run's state rather than holding it in memory.
+
+const approvalStep = createStep({
+  id: 'approve-standup',
+  description: '9. Suspend for human approval before posting',
+  inputSchema: synthesizeStep.outputSchema,
+  outputSchema: z.object({ approved: z.boolean(), summary: z.string(), usage: usageSchema }),
+  resumeSchema: z.object({ approved: z.boolean() }),
+  suspendSchema: z.object({ summary: z.string() }),
+  execute: async ({ inputData, resumeData, suspend }) => {
+    if (!resumeData) {
+      return await suspend({ summary: inputData.summary });
+    }
+    return { approved: resumeData.approved, summary: inputData.summary, usage: inputData.usage };
+  },
+});
+
+const postStep = createStep({
+  id: 'post-standup',
+  description: '10. Post the approved summary to Slack',
+  inputSchema: approvalStep.outputSchema,
+  outputSchema: z.object({
+    status: z.enum(['posted', 'declined']),
+    summary: z.string(),
+    channel: z.string().optional(),
+    ts: z.string().optional(),
+    usage: usageSchema,
+  }),
+  execute: async ({ inputData }) => {
+    if (!inputData.approved) {
+      return { status: 'declined' as const, summary: inputData.summary, usage: inputData.usage };
+    }
+    const draft = (await callMcpTool('post_slack_message', {
+      channel: 'standup',
+      message: inputData.summary,
+    })) as { pending_action_id: string };
+    const confirmed = (await callMcpTool('confirm_action', {
+      pending_action_id: draft.pending_action_id,
+    })) as { result?: { channel?: string; ts?: string } };
+    return {
+      status: 'posted' as const,
+      summary: inputData.summary,
+      channel: confirmed.result?.channel,
+      ts: confirmed.result?.ts,
+      usage: inputData.usage,
+    };
+  },
+});
+
+const confirmStep = createStep({
+  id: 'confirm-standup',
+  description: '11. Confirm the outcome',
+  inputSchema: postStep.outputSchema,
+  outputSchema: z.object({
+    status: z.enum(['posted', 'declined']),
+    summary: z.string(),
+    channel: z.string().optional(),
+    ts: z.string().optional(),
+    usage: usageSchema,
+    confirmation: z.string(),
+  }),
+  execute: async ({ inputData }) => ({
+    ...inputData,
+    confirmation:
+      inputData.status === 'posted'
+        ? `Standup summary posted to #${inputData.channel} at ${inputData.ts}.`
+        : 'Standup summary was not approved — nothing was posted.',
+  }),
+});
+
 export const standupWorkflow = createWorkflow({
   id: 'standup-workflow',
   inputSchema: workflowInputSchema,
-  outputSchema: synthesizeStep.outputSchema,
+  outputSchema: confirmStep.outputSchema,
 })
   .then(profileStep)
   .then(calendarStep)
@@ -149,4 +222,7 @@ export const standupWorkflow = createWorkflow({
   .then(slackStep)
   .then(gmailStep)
   .then(synthesizeStep)
+  .then(approvalStep)
+  .then(postStep)
+  .then(confirmStep)
   .commit();
