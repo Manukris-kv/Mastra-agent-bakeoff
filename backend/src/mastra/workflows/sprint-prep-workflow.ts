@@ -9,14 +9,13 @@ import { callMcpTool } from '../mcp';
 
 const inputSchema = z.object({ now: z.string() });
 
-// data/meta.json's current_sprint — fixed for this dataset, not derivable from a tool call.
-const CURRENT_SPRINT = 'Sprint 14';
+const CURRENT_SPRINT = process.env.JIRA_CURRENT_SPRINT;
 
 const findSprintEventStep = createStep({
   id: 'find-sprint-event',
   inputSchema,
   outputSchema: z.array(z.any()),
-  // 'this_week' resolves against the MCP server's own frozen reference date.
+  // 'this_week' resolves server-side against the real current date.
   execute: async () => callMcpTool('get_calendar_events', { start_date: 'this_week', end_date: 'this_week', event_type: 'sprint_planning' }),
 });
 
@@ -24,7 +23,7 @@ const sprintTicketsStep = createStep({
   id: 'get-sprint-tickets',
   inputSchema: findSprintEventStep.outputSchema,
   outputSchema: z.array(z.any()),
-  execute: async () => callMcpTool('get_jira_tickets', { sprint: CURRENT_SPRINT }),
+  execute: async () => callMcpTool('get_jira_tickets', CURRENT_SPRINT ? { sprint: CURRENT_SPRINT } : {}),
 });
 
 const linkPrsStep = createStep({

@@ -1,7 +1,9 @@
 import { MCPClient } from '@mastra/mcp';
 
-// Connects to the bake-off mock data server (../../../agent-sdk-bakeoff-mcp-server) —
-// Jira/GitHub/Slack/Gmail/Calendar for one fixed user, "Aisha Khan".
+// Connects to the bake-off data server (../../../agent-sdk-bakeoff-mcp-server) —
+// real Jira/GitHub/Slack/Gmail/Calendar APIs for whichever developer's
+// credentials are configured server-side (JIRA_EMAIL/GITHUB_TOKEN/
+// SLACK_BOT_TOKEN/Google OAuth), not a fixed persona or mock dataset.
 //
 // Writes (update_jira_ticket/post_slack_message/send_email) only draft and
 // return a pending_action_id; confirm_action(pending_action_id) is the only
@@ -14,7 +16,7 @@ export const pulseMcp = new MCPClient({
       url: new URL(process.env.PULSE_MCP_URL ?? 'http://localhost:8081/sse'),
       // Receives the server's own un-namespaced tool name, not "pulse_confirm_action".
       requireToolApproval: ({ toolName }: { toolName: string }) => toolName === 'confirm_action',
-      // Server's own instructions cover the draft/confirm protocol and frozen reference date.
+      // Server's own instructions cover the draft/confirm protocol and relative-date resolution.
       forwardInstructions: true,
     },
   },

@@ -1,14 +1,19 @@
-// Single source of truth for model/temperature choices. Routed through
-// OpenRouter (OPENROUTER_API_KEY) rather than calling Anthropic directly.
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 
-export const MID_MODEL = 'openrouter/anthropic/claude-sonnet-4';
+const LITELLM_URL = `${(process.env.LITELLM_BASE_URL ?? 'https://llm.keyvalue.systems').replace(/\/+$/, '')}/v1`;
 
-// Swap MID_MODEL usages to this for the ceiling-run comparison.
-export const PREMIUM_MODEL = 'openrouter/anthropic/claude-opus-4.8';
+const litellm = createOpenAICompatible({
+  name: 'litellm',
+  baseURL: LITELLM_URL,
+  apiKey: process.env.LITELLM_API_KEY,
+  includeUsage: true,
+  supportsStructuredOutputs: true,
+});
 
-// Reviewer/scorer only, deliberately a different model family: Anthropic's
-// tool-forced structured output via OpenRouter intermittently returned a bare
-// `[]` on large traces; OpenAI's response_format ran the same trace clean.
-export const JUDGE_MODEL = 'openrouter/openai/gpt-5.4-mini';
+// Bare model names (no "provider/" prefix) — we call the provider directly,
+// so there's no gateway string to parse.
+export const MID_MODEL = litellm('claude-sonnet-4-5');
+
+export const JUDGE_MODEL = litellm('gpt-5.4-mini');
 
 export const AGENT_TEMPERATURE = 0.3;

@@ -74,10 +74,20 @@ function prettyJson(value: unknown, indent = '     '): string {
 async function streamTurn(input: RunChatTurnInput): Promise<TurnResult> {
   const result: TurnResult = {};
   let inToolBlock = false;
+  let inReasoningBlock = false;
   let printedLabel = false;
+
+  function closeReasoningBlock() {
+    if (inReasoningBlock) {
+      inReasoningBlock = false;
+      process.stdout.write(`${c.reset}\n`);
+    }
+  }
+
   for await (const event of runChatTurn(input)) {
     switch (event.type) {
       case 'text':
+        closeReasoningBlock();
         if (!printedLabel) {
           printedLabel = true;
           process.stdout.write(`${c.bold}${c.cyan}Assistant:${c.reset} `);
@@ -89,9 +99,14 @@ async function streamTurn(input: RunChatTurnInput): Promise<TurnResult> {
         process.stdout.write(`${c.reset}${event.text}`);
         break;
       case 'reasoning':
+        if (!inReasoningBlock) {
+          inReasoningBlock = true;
+          process.stdout.write(`\n${c.gray}${c.bold}🤔 Thinking${c.reset}\n${c.dim}`);
+        }
         process.stdout.write(`${c.dim}${event.text}${c.reset}`);
         break;
       case 'tool-call':
+        closeReasoningBlock();
         inToolBlock = true;
         process.stdout.write(
           `\n${c.yellow}${c.bold}  🔧 ${event.toolName}${c.reset}${c.yellow}(${c.reset}\n${prettyJson(event.args)}\n${c.yellow}  )${c.reset}\n`,
@@ -103,6 +118,7 @@ async function streamTurn(input: RunChatTurnInput): Promise<TurnResult> {
         break;
       }
       case 'approval_required':
+        closeReasoningBlock();
         inToolBlock = false;
         result.pendingApproval = event;
         process.stdout.write(
@@ -113,6 +129,7 @@ async function streamTurn(input: RunChatTurnInput): Promise<TurnResult> {
         );
         break;
       case 'finish':
+        closeReasoningBlock();
         result.reply = event.reply;
         result.reviewer = event.reviewer;
         process.stdout.write('\n');

@@ -1,14 +1,14 @@
 import { Memory } from '@mastra/memory';
-import { LibSQLStore } from '@mastra/libsql';
+import { PostgresStore } from '@mastra/pg';
 
 // One shared Memory instance for every agent, scoped per-call by { resource: userId, thread: threadId }.
 export const sharedMemory = new Memory({
-  storage: new LibSQLStore({
+  storage: new PostgresStore({
     id: 'agent-memory-storage',
-    url: 'file:./mastra-memory.db',
+    connectionString: process.env.DATABASE_URL!,
   }),
   options: {
-    lastMessages: 40,
+    lastMessages: 20,
     workingMemory: {
       enabled: true,
     },

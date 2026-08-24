@@ -34,7 +34,7 @@ const calendarStep = createStep({
   description: "2. Fetch today's calendar events",
   inputSchema: profileStep.outputSchema,
   outputSchema: z.array(z.any()),
-  // Resolves against the MCP server's own frozen reference date, not our wall-clock `now`.
+  // Resolves server-side against the real current date, not our wall-clock `now`.
   execute: async () => callMcpTool('get_calendar_events', { start_date: 'today', end_date: 'today' }),
 });
 
@@ -44,8 +44,8 @@ const ticketsStep = createStep({
   inputSchema: calendarStep.outputSchema,
   outputSchema: z.array(z.any()),
   execute: async ({ getStepResult }) => {
-    const profile = getStepResult(profileStep) as { username: string };
-    return callMcpTool('get_jira_tickets', { assignee: profile.username });
+    const profile = getStepResult(profileStep) as { email: string };
+    return callMcpTool('get_jira_tickets', { assignee: profile.email });
   },
 });
 
@@ -108,7 +108,7 @@ const synthesizeStep = createStep({
 
     const prompt = `Write a standup summary for ${profile.name} (${profile.role}, ${profile.team} team), covering Yesterday, Today, and Blockers.
 
-The data below is dated relative to the mock data server's own frozen reference date — use "Yesterday"/"Today" as section labels rather than restating an absolute calendar date, and ground every sentence in the data below (do not invent tickets, PRs, messages, or dates that aren't present).
+Use "Yesterday"/"Today" as section labels rather than restating an absolute calendar date, and ground every sentence in the data below (do not invent tickets, PRs, messages, or dates that aren't present).
 
 Calendar events today:
 ${JSON.stringify(calendar, null, 2)}

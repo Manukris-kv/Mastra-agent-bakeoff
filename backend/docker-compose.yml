@@ -1,0 +1,17 @@
+name: mastra-bakeoff-backend
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: mastra
+    ports:
+      - "5440:5432"
+    volumes:
+      - mastra-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  mastra-postgres-data:
