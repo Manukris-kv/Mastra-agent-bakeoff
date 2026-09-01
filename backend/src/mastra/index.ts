@@ -25,9 +25,7 @@ export const mastra = new Mastra({
     },
     apiRoutes: [chatMessageRoute, chatApproveRoute],
   },
-  // Postgres, not the file-backed LibSQLStore from checkpoint-4 — durable
-  // storage for workflow snapshots and the observability traces below,
-  // swappable in one line the same way the memory store was in checkpoint-2.
+  // changed from PostgresStore to PostgresStoreVNext as PostgresStore does not support observability
   storage: new PostgresStoreVNext({
     id: 'mastra-storage',
     connectionString: process.env.DATABASE_URL!,
