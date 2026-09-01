@@ -1,6 +1,5 @@
 import { Mastra } from '@mastra/core/mastra';
 import { PinoLogger } from '@mastra/loggers';
-import { LibSQLStore } from '@mastra/libsql';
 
 import { standupWorkflow } from './workflows/standup-workflow';
 import { chatTurnWorkflow } from './workflows/chat-turn-workflow';
@@ -8,6 +7,7 @@ import { standupSynthesisAgent } from './agents/standup-synthesis-agent';
 import { chatAgent } from './agents/chat-agent';
 import { reviewerAgent } from './agents/reviewer-agent';
 import { chatMessageRoute, chatApproveRoute } from '../chat-routes';
+import { PostgresStore } from '@mastra/pg';
 
 export const mastra = new Mastra({
   workflows: { standupWorkflow, chatTurnWorkflow },
@@ -22,11 +22,9 @@ export const mastra = new Mastra({
     },
     apiRoutes: [chatMessageRoute, chatApproveRoute],
   },
-  storage: new LibSQLStore({
+  storage: new PostgresStore({
     id: 'mastra-storage',
-    // File-backed, not ':memory:' — a suspended workflow run has to survive
-    // this process exiting entirely; resuming it is a separate invocation.
-    url: 'file:mastra.db',
+    connectionString: process.env.DATABASE_URL!,
   }),
   logger: new PinoLogger({
     name: 'Mastra',
