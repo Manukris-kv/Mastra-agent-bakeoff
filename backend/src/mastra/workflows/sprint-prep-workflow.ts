@@ -85,6 +85,7 @@ const bundleStep = createStep({
 export const sprintPrepWorkflow = createWorkflow({
   id: 'sprint-prep-workflow',
   inputSchema,
+  description: `Deterministically gathers the sprint-prep bundle (calendar -> sprint tickets -> PR status -> Slack -> email) so the agent doesn't improvise a data-gathering plan; prioritization judgment is still left to the agent.`,
   outputSchema: bundleStep.outputSchema,
 })
   .then(findSprintEventStep)
