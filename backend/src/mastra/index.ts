@@ -1,14 +1,14 @@
 import { Mastra } from '@mastra/core/mastra';
 import { PinoLogger } from '@mastra/loggers';
-import { LibSQLStore } from '@mastra/libsql';
+import { PostgresStore } from '@mastra/pg';
 
 import { chatAgent } from './agents/chat-agent';
 
 export const mastra = new Mastra({
   agents: { chatAgent },
-  storage: new LibSQLStore({
+  storage: new PostgresStore({
     id: 'mastra-storage',
-    url: ':memory:',
+    connectionString: process.env.DATABASE_URL!,
   }),
   logger: new PinoLogger({
     name: 'Mastra',
