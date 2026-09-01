@@ -1,6 +1,6 @@
 import { Mastra } from '@mastra/core/mastra';
 import { PinoLogger } from '@mastra/loggers';
-import { LibSQLStore } from '@mastra/libsql';
+import { PostgresStore } from '@mastra/pg';
 
 import { standupWorkflow } from './workflows/standup-workflow';
 import { standupSynthesisAgent } from './agents/standup-synthesis-agent';
@@ -9,9 +9,9 @@ import { chatAgent } from './agents/chat-agent';
 export const mastra = new Mastra({
   workflows: { standupWorkflow },
   agents: { standupSynthesisAgent, chatAgent },
-  storage: new LibSQLStore({
+  storage: new PostgresStore({
     id: 'mastra-storage',
-    url: ':memory:',
+    connectionString: process.env.DATABASE_URL!,
   }),
   logger: new PinoLogger({
     name: 'Mastra',
