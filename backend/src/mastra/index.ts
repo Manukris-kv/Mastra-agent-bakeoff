@@ -11,22 +11,11 @@ import { standupSynthesisAgent } from './agents/standup-synthesis-agent';
 import { chatAgent } from './agents/chat-agent';
 import { reviewerAgent } from './agents/reviewer-agent';
 import { noFabricationScorer } from './scorers/no-fabrication-scorer';
-import { chatMessageRoute, chatApproveRoute } from '../chat-routes';
 
 export const mastra = new Mastra({
   workflows: { standupWorkflow, sprintPrepWorkflow, chatTurnWorkflow },
   agents: { standupSynthesisAgent, chatAgent, reviewerAgent },
   scorers: { noFabricationScorer },
-  server: {
-    // Dev-only: the frontend (Vite on a different port) calls this server
-    // directly. Tighten `origin` before this goes anywhere near production.
-    cors: {
-      origin: '*',
-      allowMethods: ['GET', 'POST', 'OPTIONS'],
-      allowHeaders: ['Content-Type'],
-    },
-    apiRoutes: [chatMessageRoute, chatApproveRoute],
-  },
  storage: new PostgresStoreVNext({
     id: 'mastra-storage',
     connectionString: process.env.DATABASE_URL!,

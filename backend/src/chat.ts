@@ -1,5 +1,5 @@
-// Single streaming entrypoint every caller (test script, HTTP routes) uses —
-// wraps chatTurnWorkflow's run.stream()/resumeStream(), forwarding chunks live.
+// Single streaming entrypoint for the terminal test script — wraps
+// chatTurnWorkflow's run.stream()/resumeStream(), forwarding chunks live.
 
 import { toModelMessage, type ConversationMessage, type ChatChunk } from './trace-utils';
 import type { ReviewerVerdict } from './mastra/agents/reviewer-agent';
@@ -27,7 +27,10 @@ export type ChatEvent =
   | { type: 'finish'; reply: string; trace: unknown[]; reviewer: ReviewerVerdict | undefined; usage: unknown };
 
 export async function* runChatTurn(input: RunChatTurnInput): AsyncGenerator<ChatEvent, void, unknown> {
-  // Dynamic import to avoid a circular dependency: index.ts -> chat-routes.ts -> chat.ts -> index.ts.
+  // Dynamic import, not static: a static import would evaluate mastra/index.ts
+  // (and its env-dependent PostgresStore/LiteLLM client construction) before
+  // a caller's own env-loading (e.g. test-flows.ts's process.loadEnvFile())
+  // ever runs.
   const { mastra } = await import('./mastra');
   const workflow = mastra.getWorkflow('chatTurnWorkflow');
   const threadId = input.taskConfig.threadId ?? input.taskConfig.userId;
