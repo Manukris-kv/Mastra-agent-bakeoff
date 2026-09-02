@@ -99,9 +99,15 @@ Work in backend/.
 
 2. Add src/mastra/config.ts holding the model setup. Models are reached through a LiteLLM
    proxy, which is OpenAI-compatible: one base URL from LITELLM_BASE_URL, one key from
-   LITELLM_API_KEY, and bare model names with no provider prefix. Export the agent's model
-   as a single named constant — later in this workshop swapping model families has to be a
-   one-line change here, so build for that now.
+   LITELLM_API_KEY, and bare model names with no provider prefix.
+
+   Build the provider with createOpenAICompatible from @ai-sdk/openai-compatible, called
+   directly — not Mastra's own {id, url, apiKey} model-router shorthand. That shorthand
+   never sets includeUsage, so token-usage fields silently disappear from every response for litellm.
+   Pass includeUsage: true, and supportsStructuredOutputs: true.
+
+   Export the agent's model as a single named constant — later in this workshop swapping
+   model families has to be a one-line change here, so build for that now.
 
 3. Add src/mastra/agents/chat-agent.ts: one agent, id 'chat-agent', with every MCP tool
    attached. Its instructions must state that the tools are backed by real accounts for one
@@ -362,20 +368,18 @@ step 2 did not land.
 
 ---
 
-## Prompt 5.1 — Pipeline-as-tool and reviewer agent (the pieces)
+## Prompt 5.1 — Pipeline-as-tool, and the chat turn workflow
 
-> **Concept:** the building blocks the mandatory review pipeline needs. **Target:** `checkpoint-5a`
->
-> This prompt only builds pieces. Nothing is wired into the chat turn yet — that is 5.2.
+> **Concept:** absorbing a suspending workflow behind an ordinary tool call, plus one workflow wrapping every chat turn with live streaming and a human gate on writes. **Target:** `checkpoint-5a`
 
 ```text
 Read backend/.agents/skills/mastra/SKILL.md first and follow it. Do not rely on cached
 knowledge of the Mastra API.
 
-Goal: build two pieces the next prompt will wire together — the standup pipeline exposed
-as a tool pair, and a reviewer agent that judges a reply against the tool-call trace that
-produced it. Do not wire either into the chat agent's turn flow yet; that composition,
-and the reason the reviewer must not be a tool the model can skip, is the next prompt.
+Goal: expose the standup pipeline to the chat agent as an ordinary pair of tools, without it
+ever seeing that a workflow underneath it suspended, and put every chat turn through its own
+workflow so a spontaneous write also stops for a real human decision first. No reviewer yet
+— that is the next prompt, added on top of a pipeline that already works without it.
 
 Work in backend/.
 
@@ -388,8 +392,134 @@ Work in backend/.
    The agent must never see a suspended workflow. From its side these are two normal tool
    calls that return JSON. Absorbing the pause at the tool boundary is the entire trick.
 
-2. Add src/mastra/agents/reviewer-agent.ts holding a second agent plus the function a
-   pipeline will later call.
+2. Attach both tools to the chat agent alongside its MCP tools.
+
+3. Add src/trace-utils.ts for the pure helpers this prompt needs: shared message/chunk
+   types, converting a plain message into the model's own shape, and iterating an agent's
+   stream to forward chunks live while watching for a tool-call-approval chunk.
+
+   Keep this file free of any Mastra import. Both chat-turn-workflow.ts (step 4) and chat.ts
+   (step 6) need it, and chat-turn-workflow.ts importing from chat.ts would mean the
+   workflow depending on its own consumer.
+
+4. Add src/mastra/workflows/chat-turn-workflow.ts — three steps, and every chat turn runs
+   all three:
+     - run the chat agent, streaming its output live into the workflow's stream (via the
+       helper from step 3) so a caller sees tokens, reasoning and tool calls as they happen
+     - an approval gate (part 5 below)
+     - assemble the final result: reply and token usage
+
+   The agent step must prepend a system message carrying the real current date/time and the
+   real user id before the conversation. Without it the model guesses both, and a fabricated
+   date fed into the standup tool cascades into eleven data fetches and an invented summary.
+   This is an observed failure, not a precaution.
+
+   Accumulate the reply text from the stream's own text chunks rather than trusting the
+   stream's aggregate text property — across a multi-tool-call turn that came back empty
+   here even though the chunks were correct.
+
+5. Gate exactly ONE MCP tool for human approval in src/mastra/mcp.ts: the confirm call.
+
+   Because the server already splits every write into draft-then-confirm, gating that one
+   tool gates every write there is — no allowlist to maintain, nothing to forget when a new
+   write tool appears server-side. Note that the gate receives the server's own
+   un-namespaced tool name.
+
+   When that gate fires, the agent's stream emits an approval request instead of executing.
+   The turn workflow's agent step must detect it and pass it on; the approval gate step
+   suspends the whole turn on it, and on resume either approves or declines that specific
+   tool call by id and lets the agent's stream continue.
+
+   If a second gated write appears in the same turn, it cannot get its own suspend/resume
+   round trip. Decline it rather than letting it execute unapproved.
+
+6. Add src/chat.ts: one streaming entrypoint every caller uses. It creates or resumes a turn
+   run, forwards the stream as a series of events, and ends with exactly one of two terminal
+   events — an approval-required event carrying the run id, or a finish event carrying the
+   reply and usage.
+
+   Import mastra lazily, inside the function, not as a static top-level import — a caller
+   that loads its own .env (test-flows.ts, next) needs its environment set before mastra's
+   modules construct their storage and model clients at import time.
+
+7. Add scripts/test-flows.ts: an interactive terminal client for the new entrypoint. Delete
+   ask.ts; it cannot demonstrate this composition and leaving a stale script around is worse
+   than removing it. The new script should:
+     - run one message from the command line, or loop as a REPL with no arguments
+     - render streamed reasoning, tool calls with their arguments, and tool results
+       distinctly, truncating huge results instead of flooding the terminal
+     - print the token usage after the reply
+     - when a turn suspends for a write, ask for a real y/n at the prompt and resume with it
+       — do not auto-approve
+     - load .env itself so it runs standalone
+
+8. Register the new workflow in src/mastra/index.ts.
+
+9. Rewrite the chat agent's instructions for this composition. Add:
+     - Identity: no built-in user identity — never assume, invent, or reuse one. Look up the
+       user profile before any tool call filtered by assignee, author, reviewer or
+       participant, note which identity fields it does and doesn't return, and ASK the user
+       for anything no tool can supply rather than guessing.
+     - Dates: relative words only, or an ISO date a tool already gave it — never compute one.
+     - Standup: call the start tool, quote the summary back VERBATIM, ask a plain yes/no,
+       then call the resume tool with the answer. Never post a standup any other way.
+     - Writes: draft tools only draft. Call confirm immediately, same turn, without asking
+       in chat first — confirm is the real gate, asking in chat is not. Never say a write is
+       done before confirm returns confirmed.
+     - Guardrail: escalate and stop, rather than fabricate, when it's missing something only
+       the human has.
+
+Add whatever dependencies this needs and install them.
+```
+
+**Acceptance check**
+
+```bash
+npx tsx scripts/test-flows.ts
+> Can you prep my standup?
+```
+
+You should see the standup tool call, the summary quoted back, the yes/no question, and the reply
+after you answer. There is no reviewer verdict yet — that is the next prompt.
+
+Now try a write:
+
+```bash
+> post a message in Slack saying I'm blocked
+```
+
+Answer `n` at the approval prompt and confirm nothing was posted. Ask again and answer `y`, and
+confirm it was.
+
+**Rescue:** `git checkout checkpoint-5a -- backend/ && cd backend && npm install`
+
+---
+
+## Prompt 5.2 — A review step that cannot be skipped
+
+> **Concept:** a mandatory grounding check, on every turn, that the model cannot opt out of. **Target:** `checkpoint-5`
+>
+> Assumes 5.1 landed — chat-turn-workflow.ts, chat.ts and test-flows.ts already exist and work end
+> to end, just with no check on what the agent says before it reaches the user.
+
+```text
+Read backend/.agents/skills/mastra/SKILL.md first and follow it. Do not rely on cached
+knowledge of the Mastra API.
+
+Goal: build a reviewer, then plug it into the turn pipeline from the last prompt so every
+reply the user ever sees passes through it, with no way for the model to opt out.
+
+Read this before you start. Most frameworks let you hand an agent a "reviewer" as a tool and
+instruct it to check its work. That mechanism is discretionary: the model decides, per turn,
+whether checking is worth the tokens — and on the turn where it is most confidently wrong, it
+is least likely to bother. So the reviewer here is NOT a tool, a sub-agent the model may
+delegate to, or a conditional — it is a step wired directly into chat-turn-workflow.ts's own
+chain. If you find yourself writing an `if` around whether the review happens, stop.
+
+Work in backend/.
+
+1. Add src/mastra/agents/reviewer-agent.ts holding a second agent plus the function the
+   workflow will call.
 
    - It runs on a DIFFERENT model family from the chat agent. Add its model to config.ts
      alongside the existing one. Two reasons, both real: schema-forced structured output on
@@ -413,146 +543,26 @@ Work in backend/.
    - If the check itself fails, return an unapproved verdict naming the failure rather than
      throwing. A reviewer that crashes takes down the turns it exists to protect.
 
-3. Add src/trace-utils.ts for the pure helpers: pairing tool calls to their results into a
-   trace, and iterating an agent's stream.
+2. Extend src/trace-utils.ts (from 5.1) with what the reviewer needs that streaming alone
+   did not: a trace type, and a helper that pairs an agent's tool calls to their matching
+   results into a flat list of {tool, args, result}. This stays a pure, Mastra-free helper
+   for the same reason the rest of the file is.
 
-   This file must NOT import the Mastra singleton. src/mastra/index.ts will end up importing
-   the HTTP routes, which import the chat entrypoint — put these helpers anywhere in that
-   cycle and you get a circular import that fails in a way that does not point at the cause.
+3. Insert a review step into chat-turn-workflow.ts's existing chain, between the agent step
+   and the approval gate: build the trace (step 2), call the reviewer (step 1) with the
+   draft, the trace, and the current date/time, and thread the verdict through to the
+   workflow's result.
 
-4. Register the new tools and the reviewer agent in src/mastra/index.ts. Do not attach
-   standup-tools to the chat agent's instructions yet beyond making the tools available —
-   the instruction rewrite that tells it how to use them is part of the next prompt.
+   Keep "every reply was reviewed exactly once" true through a suspend:
+     - A turn suspended for a write has no final text yet, so this step passes the
+       pending-approval state through untouched.
+     - The approval gate step from 5.1 must itself call the reviewer once a write is
+       approved or declined and the agent's stream continues — otherwise that path reaches
+       the user with no review at all.
 
-Add whatever dependencies this needs and install them.
-```
+4. Register the reviewer agent in src/mastra/index.ts.
 
-**Acceptance check**
-
-Prove each piece works standalone, without the turn pipeline that will consume it.
-
-Temporarily attach the standup tools to the chat agent from prompt 1 and run it:
-
-```bash
-npx tsx scripts/ask.ts alice thread-1 "Can you prep my standup?"
-```
-
-Confirm the start tool returns a run id and a drafted summary as a plain tool result — the agent
-should never crash on or report a "suspended workflow." Then call the resume tool the same way and
-confirm it returns an outcome.
-
-Separately, call the reviewer agent's exported function directly with a hand-built trace (a couple
-of fake tool calls and a draft reply) and confirm the verdict comes back with every field the
-schema requires, including when you construct a trace on purpose to make it fail.
-
-**Rescue:** no dedicated checkpoint for this half — fall back to `git checkout checkpoint-4 -- backend/ && cd backend && npm install` and redo 5.1.
-
----
-
-## Prompt 5.2 — Wiring: a review step that cannot be skipped
-
-> **Concept:** composing the agent, the pipeline, and a mandatory check. **Target:** `checkpoint-5`
->
-> Assumes 5.1 landed — standup-tools.ts, reviewer-agent.ts and trace-utils.ts already exist.
-
-```text
-Read backend/.agents/skills/mastra/SKILL.md first and follow it. Do not rely on cached
-knowledge of the Mastra API.
-
-Goal: put a review step in front of every reply the user ever sees — one the model has no
-way to opt out of.
-
-Read this before you start. Most frameworks let you hand an agent a "reviewer" as a tool and
-instruct it to check its work. That mechanism is discretionary: the model decides, per turn,
-whether checking is worth the tokens — and on the turn where it is most confidently wrong, it
-is least likely to bother. So the reviewer here is NOT a tool. It is a step in a pipeline that
-every single chat turn passes through. Do not implement it as a tool, a sub-agent the model
-may delegate to, or a conditional. If you find yourself writing an `if` around whether the
-review happens, stop.
-
-Work in backend/.
-
-1. Add src/mastra/workflows/chat-turn-workflow.ts — four steps, and every chat turn runs
-   all four:
-     - run the chat agent, streaming its output live into the workflow's stream so a caller
-       sees tokens, reasoning and tool calls as they happen
-     - review the draft against its tool-call trace, using the reviewer agent from 5.1
-     - an approval gate (part 2 below)
-     - assemble the final result: reply, trace, verdict, token usage
-
-   The agent step must prepend a system message carrying the real current date/time and the
-   real user id before the conversation. Without it the model guesses both, and a fabricated
-   date fed into the standup tool cascades into eleven data fetches and an invented summary.
-   This is an observed failure, not a precaution.
-
-   Accumulate the reply text from the stream's own text chunks rather than trusting the
-   stream's aggregate text property — across a multi-tool-call turn that came back empty
-   here even though the chunks were correct.
-
-2. Gate exactly ONE MCP tool for human approval in src/mastra/mcp.ts: the confirm call.
-
-   Because the server already splits every write into draft-then-confirm, gating that one
-   tool gates every write there is — no allowlist to maintain, nothing to forget when a new
-   write tool appears server-side. Note that the gate receives the server's own
-   un-namespaced tool name.
-
-   When that gate fires, the agent's stream emits an approval request instead of executing.
-   The turn workflow's agent step must detect it and pass it on; the approval gate step
-   suspends the whole turn on it, and on resume either approves or declines that specific
-   tool call by id and lets the agent's stream continue.
-
-   Two details that matter:
-     - When a turn is suspended for a write, there is no final text yet, so the review step
-       has nothing to check. It passes through, and the review runs inside the gate after
-       resuming instead. Whatever text reaches the user must have been reviewed exactly
-       once, against the trace that actually produced it. Keep that invariant true.
-     - If a second gated write appears in the same turn, it cannot get its own
-       suspend/resume round trip. Decline it rather than letting it execute unapproved.
-
-3. Add src/chat.ts: one streaming entrypoint every caller uses. It creates or resumes a turn
-   run, forwards the stream as a series of events, and ends with exactly one of two terminal
-   events — an approval-required event carrying the run id, or a finish event carrying reply,
-   trace, verdict and usage. Add a non-streaming variant that collects the same run.
-
-4. Add src/chat-routes.ts: two HTTP routes over that entrypoint — one to send a message, one
-   to supply an approval decision — each streaming one JSON object per line. Keep it
-   stateless: a suspended run resumes purely by its run id, because storage holds the
-   snapshot. Nothing waits in memory. Register the routes on the Mastra server in
-   src/mastra/index.ts, along with the new workflow. Permissive CORS is fine for the
-   workshop; leave a comment saying it is dev-only.
-
-5. Replace scripts/ask.ts with scripts/test-flows.ts — an interactive terminal client for
-   the new entrypoint. Delete ask.ts; it cannot demonstrate this composition and leaving a
-   stale script around is worse than removing it. The new script should:
-     - run one message from the command line, or loop as a REPL with no arguments
-     - render streamed reasoning, tool calls with their arguments, and tool results
-       distinctly, truncating huge results instead of flooding the terminal
-     - print the reviewer's verdict after the reply, and the token usage
-     - when a turn suspends for a write, ask for a real y/n at the prompt and resume with it
-       — do not auto-approve
-     - load .env itself so it runs standalone
-
-6. Rewrite the chat agent's instructions for this composition. Add:
-     - Identity: it has no built-in identity for the user and must never assume, invent, or
-       reuse an id from elsewhere in the conversation. Before any tool call filtered by
-       assignee, author, reviewer or participant, look up the user profile first. Note in
-       the instructions which identity fields that profile does and does not return, and
-       tell it to ASK the user directly for any identity value no tool can supply, rather
-       than substituting a plausible-looking one that will silently match nothing.
-     - Dates: always pass relative date words, or an ISO date a tool result already gave it.
-       Never compute one. Talk about time the same way in conversation.
-     - Standup: call the start tool, then quote the summary it returns back to the user
-       VERBATIM and ask a plain yes/no. That summary was grounded in real data the chat
-       agent never saw, so re-summarising it can only add fabrication. Then call the resume
-       tool with the answer. Never post a standup any other way.
-     - Writes: the write tools only draft. As soon as it has drafted one, it must call the
-       confirm tool immediately, in the same turn, and must NOT stop to ask the user in chat
-       first. This reads backwards, so state the reason in the instructions: asking in chat
-       produces a simulation of approval that nothing enforces, whereas calling confirm is
-       what triggers the real gate. And it must never tell the user a write is done until
-       confirm has actually come back confirmed.
-     - A guardrail: if it genuinely cannot proceed without something only the human has, it
-       escalates and stops rather than fabricating an answer to fill the gap.
+5. Update scripts/test-flows.ts to print the reviewer's verdict after the reply.
 
 Add whatever dependencies this needs and install them.
 ```
@@ -564,8 +574,8 @@ npx tsx scripts/test-flows.ts
 > Can you prep my standup?
 ```
 
-You should see the standup tool call, the summary quoted back, the yes/no question — and a reviewer
-verdict printed after the reply.
+You should see the same flow as 5.1 — the standup tool call, the summary quoted back, the yes/no
+question — plus a reviewer verdict printed after the reply, which was missing before.
 
 Then the demo the whole checkpoint exists for:
 
@@ -577,8 +587,9 @@ Then the demo the whole checkpoint exists for:
 This is a regression that really happened in this project, and it was caught only by a routine
 re-test noticing a field that should never have been empty. Put the step back.
 
-Also try a write — "post a message in Slack saying I'm blocked" — and answer `n` at the approval
-prompt. Confirm nothing was posted.
+Also re-run the write from 5.1's acceptance check ("post a message in Slack saying I'm blocked")
+and confirm a verdict is printed for that reply too — the review must fire on the write path, not
+just the plain-answer path.
 
 **Rescue:** `git checkout checkpoint-5 -- backend/ && cd backend && npm install`
 
