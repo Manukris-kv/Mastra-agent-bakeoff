@@ -193,7 +193,8 @@ Work in backend/.
    can complete the demo without ever seeing that the scoping exists, and the demo proves
    nothing. Put the three-command demo in the file's header comment.
 
-5. Leave Mastra's own storage as it is. Only memory gets a real store at this checkpoint.
+5. Point Mastra's own storage at the same Postgres instance too, instead of leaving it on its
+   default store.
 
 Add whatever dependencies this needs and install them.
 ```
@@ -334,12 +335,11 @@ Work in backend/.
 
    Keep threading token usage through to the end.
 
-2. In src/mastra/index.ts, change Mastra's own storage from in-memory to something that
-   survives this process exiting entirely.
-
-   This is not tidying. The demo below resumes a suspended run from a SECOND, SEPARATE
-   terminal invocation — the first process is gone by then. In-memory storage cannot do
-   that. Leave a comment saying so, because the next person to read that line will wonder.
+2. Mastra's own storage already points at Postgres since prompt 2, so it survives this
+   process exiting entirely — nothing to change here. The demo below resumes a suspended
+   run from a SECOND, SEPARATE terminal invocation; leave a comment on the storage config
+   noting that this is exactly why it needs to be durable, because the next person to read
+   that line will wonder.
 
 3. Rewrite scripts/run-standup.ts to do two jobs:
      - with no arguments: start a run; if it suspends, print the run id and the drafted
@@ -361,8 +361,8 @@ npx tsx scripts/run-standup.ts --resume <runId> approved     # now check the rea
 ```
 
 Then the part that proves it: **start a run, close the terminal entirely, open a new one, and resume
-that run id.** If it works, the state is genuinely persisted. If it does not, your storage change in
-step 2 did not land.
+that run id.** If it works, the state is genuinely persisted. If it does not, the Postgres storage
+from prompt 2 did not land.
 
 **Rescue:** `git checkout checkpoint-4 -- backend/ && cd backend && npm install`
 
@@ -625,12 +625,8 @@ Work in backend/.
 2. Attach the scorer to the chat agent, sampling every response, and register it on the
    Mastra instance so it shows up in Studio.
 
-3. Swap Mastra's storage from the file-backed store to Postgres — the same database the
-   memory store has been using since prompt 2. Point the observability store at it too.
-   Remove the now-unused storage dependency from package.json rather than leaving it behind.
-
-   Say in a comment that this is a one-line provider swap, the same way the memory store was
-   — that portability is the point of the checkpoint, not a side effect.
+3. Mastra's storage has been on Postgres since prompt 2 — the same database the memory store
+   uses. Point the observability store at it too.
 
 4. Add observability to the Mastra instance: persist events to storage, and also export to
    the Mastra platform if a platform token is present in the environment. Redact sensitive
@@ -658,81 +654,3 @@ Then the portability demo:
 
 Open Mastra Studio (`npm run dev`, then `http://localhost:4111`) and find the scorer's results.
 
-**Rescue:** `git checkout checkpoint-6 -- backend/ && cd backend && npm install`
-
----
-
-## Prompt 7 — The full assistant
-
-> **Concept:** one agent, no mode flags, deciding for itself. **Target:** `checkpoint-7`
-
-```text
-Read backend/.agents/skills/mastra/SKILL.md first and follow it. Do not rely on cached
-knowledge of the Mastra API.
-
-Goal: everything so far in one place — one agent handling quick lookups, a fixed procedure,
-and open-ended planning, inferring which kind of request it is looking at from the message
-alone. No mode input anywhere in the system.
-
-Work in backend/.
-
-1. Add src/mastra/workflows/sprint-prep-workflow.ts: a second fixed pipeline that gathers
-   the standard sprint-planning bundle — this week's sprint-planning calendar events, the
-   current sprint's tickets, the PRs linked to those tickets and their detail, recent
-   engineering-channel Slack, and recent sprint-related email — and returns all of it
-   together.
-
-   Three constraints:
-     - It is READ-ONLY. No model call, no suspension, no writes. It gathers; the agent that
-       called it does the judging. Do not add a synthesis step.
-     - Take the current sprint's name from an environment variable, and skip the sprint
-       filter entirely when it is unset. The MCP server has no way to resolve "the current
-       sprint" itself, so this is a real gap — document it as one in .env.example rather
-       than having the model guess a sprint name.
-     - Reuse the same relative-date and direct-MCP-call approach as the standup pipeline.
-
-2. Expose it to the chat agent as a workflow the agent can call directly, rather than
-   hand-writing a start/resume tool pair like the standup one needed. It never suspends, so
-   it does not need that treatment — and the contrast between the two is worth being able to
-   point at.
-
-3. Register it on the Mastra instance.
-
-4. Add an open-ended planning section to the chat agent's instructions, and open the
-   instructions by telling it that it decides for itself, from the message alone, what kind
-   of request this is and how much work it needs — nobody will tell it "this is a quick
-   question" or "this is a planning task". Update its description to match all three shapes.
-
-   The planning section should require it to:
-     - clarify first if the request is ambiguous about timeframe, project or which meeting,
-       rather than guessing at scope
-     - gather data across sources before reasoning, and for sprint-planning-shaped requests
-       use the sprint-prep workflow to get the standard bundle instead of improvising a
-       data-gathering plan by hand
-     - reason explicitly about conflicts and priorities — overlapping meetings, blocked
-       tickets, stale PRs — not list raw data back at the user
-     - present two or three ranked options with a one-line reason each, not one unexplained
-       answer
-
-5. Give the agent an explicit default output-token ceiling and high reasoning effort, since
-   planning requests are now in scope and the quick-lookup budget is no longer the only
-   shape it handles.
-
-6. Update the root README.md to describe the finished system: how a turn flows, where writes
-   are gated, which model does what, and how to run it locally.
-```
-
-**Acceptance check**
-
-Three prompts, three different shapes, one agent, no flags:
-
-```bash
-npx tsx scripts/test-flows.ts
-> Any PRs waiting for my review?          # quick lookup — 1-3 tool calls, short answer
-> Can you prep my standup?                # fixed procedure — pauses for approval
-> Prep me for sprint planning             # open-ended — ranked options come back
-```
-
-If all three behave differently and you never told it which was which, you are done.
-
-**Rescue:** `git checkout checkpoint-7 -- backend/ && cd backend && npm install`
