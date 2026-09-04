@@ -265,7 +265,7 @@ Work in backend/.
      - fetch recent email threads
      - synthesize the summary using the agent from step 2, passing it everything gathered
 
-   Four constraints:
+   Five constraints:
      - every data-gathering step calls the MCP server through the helper from step 1. No
        agent is involved in running this workflow.
      - any date argument is a relative word like 'today' or 'this_week', so the server
@@ -276,6 +276,12 @@ Work in backend/.
      - a step that needs an earlier step's result should read it explicitly by name, not
        rely on it arriving as its input. The chain expresses ORDER; it is not the only way
        data moves. Make that visible in how you write it.
+     - wrap each data-gathering step's MCP call in its own try/catch, not just the workflow
+       as a whole. One flaky source (a timeout, a malformed response) should not take the
+       other six down with it. On failure, log the real error and return a fallback shaped
+       like that step's own output — clearly marked as an error, not silently empty — so
+       synthesis can honestly say a source was unavailable instead of claiming it found
+       nothing.
 
    Thread the model call's token usage out of the workflow so a caller can report it later.
 
@@ -626,7 +632,12 @@ Work in backend/.
    Mastra instance so it shows up in Studio.
 
 3. Mastra's storage has been on Postgres since prompt 2 — the same database the memory store
-   uses. Point the observability store at it too.
+   uses. Use PostgresStoreVNext specifically, not plain PostgresStore: the scorer from step 1
+   needs its results persisted, and plain PostgresStore's observability domain silently drops
+   batch score/metric writes instead of erroring — a WARN, not a crash, so it looks like it
+   worked until you go looking for the scores and find nothing. PostgresStoreVNext takes its
+   own explicit `observability: { connectionString }` block even when it points at the same
+   database as the main store; expect (and ignore) a "same instance" warning when it does.
 
 4. Add observability to the Mastra instance: persist events to storage, and also export to
    the Mastra platform if a platform token is present in the environment. Redact sensitive
