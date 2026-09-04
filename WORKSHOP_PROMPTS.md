@@ -42,6 +42,16 @@ will differ from the branch and from your neighbour's, and that is fine.
 **Each prompt is self-contained.** Paste the whole fenced block. Do not summarise it or split it up —
 the constraints in it are the parts that took someone a debugging session to learn.
 
+**Two `npm install` gotchas that will cost you a debugging session if you don't know them:**
+
+- After removing a dependency (e.g. swapping storage providers), `mastra dev`/`build`/`start` can
+  still crash with `ERR_MODULE_NOT_FOUND` for the package you just removed. That's a stale build,
+  not your code: `rm -rf .mastra` and re-run.
+- `npm install <new-pkg>` can silently prune an already-installed package that was in `node_modules`
+  but not yet listed in `package.json` (leftover from the scaffold or an earlier step). If something
+  that worked a minute ago suddenly can't find a module, run `ls node_modules/@mastra/` before and
+  after your next install and compare.
+
 ---
 
 ## Prompt 0 — Setup (before anything else)
@@ -69,7 +79,17 @@ Leave it up for the whole session. From prompt 1 onward, the app fetches the MCP
 load time**, so an unreachable server is a startup crash, not a runtime error. If your app dies
 instantly on boot, check this first, every time.
 
-**3. Verify model access.** One real completion, before the room moves on. If your key is wrong you
+**3. Verify model access — and get a real model name.** The prompts below tell you to use *bare*
+model names (no `provider/` prefix) against the LiteLLM proxy, but they don't hand you one, and
+guessing costs real 404s against models that exist on the proxy's list but aren't provisioned on the
+backing project. List what's actually callable first:
+
+```bash
+curl -s "$LITELLM_BASE_URL/v1/models" -H "Authorization: Bearer $LITELLM_API_KEY"
+```
+
+Start with `claude-sonnet-4-6` if it's on that list — that's the model this workshop's own reference
+solution uses. Get one real completion through it before the room moves on. If your key is wrong you
 want to know now, not at prompt 5.
 
 **4. Postgres is *not* needed yet.** It arrives at prompt 2, along with the `docker-compose.yml` that
@@ -124,6 +144,12 @@ Work in backend/.
 5. Add scripts/ask.ts: takes a message as command-line arguments, sends it to the agent,
    prints the reply and then the tool calls it made. Keep it genuinely tiny — the point is
    that there is no machinery here.
+
+   `npx tsx` does not load .env on its own — the acceptance check below runs this script
+   standalone, so it must load backend/.env itself at the top (Node's own
+   process.loadEnvFile() does this with no extra dependency; skip the error if the file is
+   simply missing). Without this the script fails on the first model call with a confusing
+   DNS/connection error, not an obviously-missing-env-var error.
 
 Add whatever dependencies this needs to package.json and install them.
 
@@ -262,10 +288,12 @@ Work in backend/.
      - for each ticket, resolve its linked GitHub PRs
      - reshape that into one flat list of PR ids, then fetch detail for each one
      - fetch recent messages from the standup channel
-     - fetch recent email threads
+     - fetch recent email threads — bound it with a relative-word `since` filter (e.g.
+       'this_week'); an unfiltered mailbox fetch is not "recent" and real threads can be
+       large
      - synthesize the summary using the agent from step 2, passing it everything gathered
 
-   Five constraints:
+   Six constraints:
      - every data-gathering step calls the MCP server through the helper from step 1. No
        agent is involved in running this workflow.
      - any date argument is a relative word like 'today' or 'this_week', so the server
@@ -275,13 +303,21 @@ Work in backend/.
        when the server changes.
      - a step that needs an earlier step's result should read it explicitly by name, not
        rely on it arriving as its input. The chain expresses ORDER; it is not the only way
-       data moves. Make that visible in how you write it.
+       data moves. Make that visible in how you write it — Mastra's own getStepResult(step)
+       is the direct way to do this; reach for that before reinventing your own side
+       channel.
      - wrap each data-gathering step's MCP call in its own try/catch, not just the workflow
        as a whole. One flaky source (a timeout, a malformed response) should not take the
        other six down with it. On failure, log the real error and return a fallback shaped
        like that step's own output — clearly marked as an error, not silently empty — so
        synthesis can honestly say a source was unavailable instead of claiming it found
-       nothing.
+       nothing. This is not optional scaffolding — the acceptance check below actually
+       forces one source to fail and checks the run still completes.
+     - before embedding any gathered result into the synthesis prompt, cap its size (e.g.
+       truncate any single field over a few thousand characters, with a note that it was
+       truncated). A real email body or PR description can be large enough to blow the
+       model's context or make the request time out — this has actually happened in this
+       project, on this exact step.
 
    Thread the model call's token usage out of the workflow so a caller can report it later.
 
@@ -290,6 +326,12 @@ Work in backend/.
 5. Add scripts/run-standup.ts: create a run, start it, print the status and the summary.
    Nothing else. Its header comment should say plainly that no agent is involved and that
    the order you see is the order the workflow definition sets.
+
+   Get the workflow via mastra.getWorkflow('standup-workflow') from the registered Mastra
+   instance in src/mastra/index.ts — not by importing the standupWorkflow object directly.
+   Only the Mastra instance's constructor attaches durable storage to a workflow; a directly
+   imported one runs, but silently without it. This doesn't bite you here, but it is exactly
+   what prompt 4 needs and prompt 4 will not remind you.
 ```
 
 **Acceptance check**
@@ -304,6 +346,16 @@ Watch the steps fire in order. Then do this, because it is the actual lesson:
 > The order changes. You changed it, not the model.
 
 Put them back afterwards.
+
+Now prove the try/catch requirement actually holds, not just that you wrote the word "catch"
+somewhere: temporarily point `PULSE_MCP_URL` at a wrong port (or stop the MCP server's container)
+and run `scripts/run-standup.ts` again.
+
+> The run should still finish and print a summary — one that plainly says which sources it
+> couldn't reach, not a stack trace and not a summary that quietly pretends those sources came back
+> empty.
+
+Restart the MCP server and put `PULSE_MCP_URL` back before continuing.
 
 **Rescue:** `git checkout checkpoint-3 -- backend/ && cd backend && npm install`
 
